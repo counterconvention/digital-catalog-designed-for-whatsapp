@@ -61,6 +61,8 @@ export const CartDrawer: React.FC = () => {
   const remainingForFreeShipping = Math.max(0, settings.freeShippingMinimum - cartTotal);
   const freeShippingProgress = Math.min(100, (cartTotal / settings.freeShippingMinimum) * 100);
 
+  const [copiedCode, setCopiedCode] = useState(false);
+
   const handleCheckoutWhatsApp = () => {
     if (!customer.name.trim()) {
       setErrorMsg('Por favor, informe seu nome para o pedido.');
@@ -98,13 +100,35 @@ export const CartDrawer: React.FC = () => {
         waText: order.whatsappMessage
       });
 
-      // Open WhatsApp in a new tab
-      window.open(waUrl, '_blank');
-    } catch (err) {
-      console.error(err);
-      setErrorMsg('Erro ao gerar pedido. Tente novamente.');
+      // Safely attempt to trigger opening WhatsApp
+      try {
+        const link = document.createElement('a');
+        link.href = waUrl;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(() => {
+          if (document.body.contains(link)) {
+            document.body.removeChild(link);
+          }
+        }, 200);
+      } catch (openErr) {
+        console.warn('Auto-open WhatsApp skipped/blocked:', openErr);
+      }
+    } catch (err: any) {
+      console.error('Erro ao finalizar pedido:', err);
+      setErrorMsg(err?.message || 'Erro ao processar pedido. Por favor, tente novamente.');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleCopyCode = () => {
+    if (createdOrderData?.orderId) {
+      navigator.clipboard.writeText(`#${createdOrderData.orderId}`);
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2000);
     }
   };
 
@@ -175,38 +199,76 @@ export const CartDrawer: React.FC = () => {
         <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-6">
           {createdOrderData ? (
             /* Order Placed Success View */
-            <div className="py-6 text-center space-y-4">
+            <div className="py-5 text-center space-y-4">
               <div className="w-16 h-16 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center mx-auto shadow-inner">
                 <Check className="w-8 h-8" />
               </div>
               <div>
                 <span className="text-xs font-bold uppercase tracking-widest text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
-                  Pedido Gerado com Sucesso!
+                  Pedido Registrado com Sucesso!
                 </span>
-                <h3 className="text-2xl font-extrabold text-neutral-900 mt-2 font-mono">
-                  #{createdOrderData.orderId}
-                </h3>
-                <p className="text-xs sm:text-sm text-neutral-600 mt-1 max-w-sm mx-auto">
-                  Seu pedido foi formatado e redirecionado para o WhatsApp da {settings.storeName}.
+                
+                {/* Highlighted Order Code Box */}
+                <div className="mt-3 p-3 bg-neutral-900 text-white rounded-2xl flex items-center justify-between shadow-md max-w-sm mx-auto">
+                  <div className="text-left pl-1">
+                    <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider block">
+                      Código para Rastreio
+                    </span>
+                    <span className="text-xl font-black font-mono text-rose-300">
+                      #{createdOrderData.orderId}
+                    </span>
+                  </div>
+                  <button
+                    onClick={handleCopyCode}
+                    className="py-1.5 px-3 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer text-white border border-neutral-700"
+                    title="Copiar código do pedido"
+                  >
+                    {copiedCode ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <span className="text-emerald-400">Copiado!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5 text-neutral-300" />
+                        <span>Copiar Código</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <p className="text-xs text-neutral-600 mt-2.5 max-w-xs mx-auto leading-relaxed">
+                  Este código foi registrado no sistema da <strong>{settings.storeName}</strong>. Clique abaixo para enviar o pedido diretamente no WhatsApp oficial.
                 </p>
               </div>
 
-              {/* Box with WhatsApp message preview and copy */}
-              <div className="bg-neutral-50 rounded-2xl p-4 text-left border border-neutral-200 text-xs font-mono text-neutral-700 max-h-48 overflow-y-auto whitespace-pre-line shadow-inner">
-                {createdOrderData.waText}
+              {/* Box with WhatsApp message preview */}
+              <div className="text-left space-y-1">
+                <div className="flex items-center justify-between text-[11px] text-neutral-500 font-bold px-1">
+                  <span>Prévia da Mensagem (wa.me):</span>
+                  <span className="text-[10px] text-emerald-700 font-semibold">Tudo incluído automaticamente</span>
+                </div>
+                <div className="bg-neutral-50 rounded-2xl p-3.5 text-left border border-neutral-200 text-xs font-mono text-neutral-700 max-h-48 overflow-y-auto whitespace-pre-line shadow-inner leading-relaxed">
+                  {createdOrderData.waText}
+                </div>
               </div>
 
-              <div className="flex flex-col gap-2 pt-2">
+              <div className="flex flex-col gap-2 pt-1">
+                {/* Main WhatsApp Button */}
                 <a
                   href={createdOrderData.waUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-md transition-all"
+                  className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all"
                 >
-                  <ExternalLink className="w-4 h-4" />
-                  Abrir Conversa no WhatsApp
+                  <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
+                    <path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.582 2.128 2.182-.573c.978.58 1.911.928 3.145.929 3.178 0 5.767-2.587 5.768-5.766 0-3.18-2.586-5.771-5.764-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.312.045-.694.062-2.124-.531-1.828-.758-2.996-2.614-3.087-2.735-.09-.12-1.205-1.603-1.205-3.057 0-1.455.765-2.169 1.036-2.459.271-.29.593-.362.79-.362.197 0 .394.002.566.01.184.008.43-.07.672.512.25.603.854 2.085.928 2.235.074.15.124.325.025.522-.099.197-.148.32-.295.492-.148.172-.311.385-.445.516-.148.147-.302.308-.13.604.172.296.766 1.264 1.644 2.046 1.129 1.006 2.08 1.317 2.376 1.464.296.147.469.123.642-.074.172-.198.739-.861.936-1.156.197-.295.394-.246.665-.147.271.098 1.722.812 2.018.96.296.148.493.222.566.345.074.123.074.714-.07 1.119z" />
+                  </svg>
+                  <span>Enviar Pedido pelo WhatsApp</span>
+                  <ExternalLink className="w-4 h-4 ml-1" />
                 </a>
 
+                {/* Copy full formatted message */}
                 <button
                   onClick={handleCopyText}
                   className="w-full py-2.5 px-4 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-xl font-semibold text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer"
@@ -214,12 +276,12 @@ export const CartDrawer: React.FC = () => {
                   {copied ? (
                     <>
                       <Check className="w-4 h-4 text-emerald-600" />
-                      <span>Mensagem Copiada!</span>
+                      <span className="text-emerald-700 font-bold">Mensagem Completa Copiada!</span>
                     </>
                   ) : (
                     <>
                       <Copy className="w-4 h-4 text-neutral-600" />
-                      <span>Copiar Texto do Pedido</span>
+                      <span>Copiar Mensagem do Pedido</span>
                     </>
                   )}
                 </button>
@@ -229,9 +291,9 @@ export const CartDrawer: React.FC = () => {
                     setCreatedOrderData(null);
                     setIsCartOpen(false);
                   }}
-                  className="text-xs text-neutral-500 hover:text-neutral-900 mt-2 cursor-pointer"
+                  className="text-xs text-neutral-500 hover:text-neutral-900 mt-2 font-medium cursor-pointer"
                 >
-                  Continuar navegando no catálogo
+                  Concluir e Voltar ao Catálogo
                 </button>
               </div>
             </div>

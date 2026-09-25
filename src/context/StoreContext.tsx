@@ -17,11 +17,13 @@ import {
   initialOrders
 } from '../data/initialData';
 import { playOrderNotificationSound } from '../utils/audio';
+import { getClientMetadata } from '../utils/clientMetadata';
 import {
   registerServiceWorker,
   sendBrowserOrderNotification,
   getNotificationPermissionStatus,
   requestNotificationPermission,
+  disablePushAlerts,
   NotificationPermissionStatus
 } from '../utils/browserNotifications';
 
@@ -68,6 +70,7 @@ interface StoreContextType {
   deleteNotification: (id: string) => void;
   notificationPermission: NotificationPermissionStatus;
   requestBrowserPushPermission: () => Promise<boolean>;
+  disableBrowserPushAlerts: () => void;
   triggerTestOrderNotification: (delaySeconds?: number) => Promise<void>;
   testNotificationCountdown: number | null;
 
@@ -546,56 +549,85 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
 
     const totalProfit = total - totalCost;
+    const clientMetadata = getClientMetadata();
 
-    // Build the pre-formatted WhatsApp message
+    // Build the enhanced pre-formatted WhatsApp message containing all cart details
+    const formattedDate = new Date().toLocaleDateString('pt-BR');
+    const formattedTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const totalPieces = cart.reduce((acc, item) => acc + item.quantity, 0);
+
     const lines: string[] = [];
-    lines.push(`🛍️ *NOVO PEDIDO - ${settings.storeName.toUpperCase()}*`);
-    lines.push(`*Código:* #${orderId}`);
-    lines.push(`📅 *Data:* ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`);
-    lines.push(`----------------------------------------`);
-    lines.push(`👤 *DADOS DA CLIENTE*`);
-    lines.push(`• *Nome:* ${customer.name}`);
-    lines.push(`• *Telefone:* ${customer.phone}`);
+    lines.push(`✨ *PEDIDO DE COMPRA - ${settings.storeName.toUpperCase()}* ✨`);
+    lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    lines.push(`🔖 *CÓDIGO DO PEDIDO:* *#${orderId}*`);
+    lines.push(`📅 *Data:* ${formattedDate} às ${formattedTime}`);
+    lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    lines.push(`👤 *DADOS DA CLIENTE:*`);
+    lines.push(`• *Nome Completo:* ${customer.name}`);
+    lines.push(`• *WhatsApp:* ${customer.phone}`);
+
     if (customer.deliveryMethod === 'Retirar na Loja' || customer.deliveryMethod === 'Retirada na Loja') {
-      lines.push(`• *Entrega:* Retirar na Loja (${settings.address}, ${settings.cityState})`);
+      lines.push(`• *Forma de Entrega:* Retirada no Showroom (Grátis)`);
+      lines.push(`  📍 *Ponto de Retirada:* ${settings.address}, ${settings.cityState}`);
     } else {
-      lines.push(`• *Entrega:* Correios`);
+      lines.push(`• *Forma de Entrega:* Correios / Sedex`);
       if (customer.address) {
-        lines.push(`• *Endereço:* ${customer.address}`);
+        lines.push(`  📍 *Endereço Completo:* ${customer.address}`);
       }
     }
-    const paymentLabel = customer.paymentMethod === 'Pix'
+
+    const paymentLabel = customer.paymentMethod.toLowerCase().includes('pix')
       ? 'Pix (5% OFF aplicado)'
-      : customer.paymentMethod === 'Cartão de Crédito'
+      : customer.paymentMethod.toLowerCase().includes('crédito') || customer.paymentMethod.toLowerCase().includes('credito')
       ? 'Cartão de Crédito (Até 12x)'
-      : customer.paymentMethod === 'Débito'
-      ? 'Débito (Máquina na Retirada)'
+      : customer.paymentMethod.toLowerCase().includes('débito') || customer.paymentMethod.toLowerCase().includes('debito')
+      ? 'Débito (Máquina no Showroom)'
       : customer.paymentMethod;
+
     lines.push(`• *Forma de Pagamento:* ${paymentLabel}`);
-    if (customer.notes) {
-      lines.push(`• *Observação:* ${customer.notes}`);
+    if (customer.notes && customer.notes.trim()) {
+      lines.push(`• *Observações:* ${customer.notes.trim()}`);
     }
-    lines.push(`----------------------------------------`);
-    lines.push(`👗 *ITENS DO PEDIDO:*`);
+
+    lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    lines.push(`👗 *ITENS DO PEDIDO (${cart.length} modelo(s) • ${totalPieces} peça(s)):*`);
+    lines.push(``);
+
     cart.forEach((item, idx) => {
       const price = item.product.isPromo && item.product.promoPrice ? item.product.promoPrice : item.product.salePrice;
-      lines.push(`${idx + 1}. *${item.quantity}x* ${item.product.name}`);
-      lines.push(`   ▸ Tam: *${item.selectedSize}* | Cor: *${item.selectedColor}*`);
-      lines.push(`   ▸ R$ ${(price * item.quantity).toFixed(2).replace('.', ',')} (R$ ${price.toFixed(2).replace('.', ',')} un.)`);
+      const itemTotal = price * item.quantity;
+      lines.push(`${idx + 1}️⃣ *${item.quantity}x ${item.product.name}*`);
+      lines.push(`   ▸ Categoria: ${item.product.category}`);
+      lines.push(`   ▸ Tamanho: *${item.selectedSize}* | Cor: *${item.selectedColor}*`);
+      if (item.product.fabric) {
+        lines.push(`   ▸ Tecido: ${item.product.fabric}`);
+      }
+      lines.push(`   ▸ Valor: R$ ${itemTotal.toFixed(2).replace('.', ',')} (R$ ${price.toFixed(2).replace('.', ',')} cada)`);
+      lines.push(``);
     });
-    lines.push(`----------------------------------------`);
-    lines.push(`*Subtotal:* R$ ${subtotal.toFixed(2).replace('.', ',')}`);
+
+    lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    lines.push(`💰 *RESUMO FINANCEIRO:*`);
+    lines.push(`• *Subtotal dos Produtos:* R$ ${subtotal.toFixed(2).replace('.', ',')}`);
     if (discount > 0) {
-      lines.push(`*Desconto Pix (5%):* -R$ ${discount.toFixed(2).replace('.', ',')}`);
+      lines.push(`• *Desconto Pix (5% OFF):* -R$ ${discount.toFixed(2).replace('.', ',')}`);
     }
-    lines.push(`*TOTAL DO PEDIDO:* *R$ ${total.toFixed(2).replace('.', ',')}*`);
-    lines.push(`----------------------------------------`);
-    lines.push(`Olá! Gostaria de confirmar a disponibilidade das peças para envio/retirada. Aguardo as orientações para prosseguir. ✨`);
+    const isFreeShipping = subtotal >= settings.freeShippingMinimum || customer.deliveryMethod === 'Retirar na Loja' || customer.deliveryMethod === 'Retirada na Loja';
+    lines.push(`• *Frete:* ${isFreeShipping ? 'GRÁTIS' : 'A calcular / combinar'}`);
+    lines.push(`💎 *TOTAL A PAGAR:* *R$ ${total.toFixed(2).replace('.', ',')}*`);
+    lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    lines.push(`Olá! Montei meu pedido no catálogo online com o código *#${orderId}*. Gostaria de confirmar a disponibilidade dos modelos para prosseguirmos. Aguardo seu retorno! ✨`);
 
     const waText = lines.join('\n');
 
-    // Clean phone number (only digits)
-    const cleanNumber = settings.whatsappNumber.replace(/\D/g, '');
+    // Clean phone number (guarantee Brazilian country code 55 if not present)
+    let cleanNumber = (settings.whatsappNumber || '').replace(/\D/g, '');
+    if (cleanNumber.length === 10 || cleanNumber.length === 11) {
+      cleanNumber = `55${cleanNumber}`;
+    }
+    if (!cleanNumber) {
+      cleanNumber = '5511987654321';
+    }
     const waUrl = `https://wa.me/${cleanNumber}?text=${encodeURIComponent(waText)}`;
 
     const newOrder: Order = {
@@ -609,7 +641,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       totalProfit,
       status: 'Pendente',
       createdAt: new Date().toISOString(),
-      whatsappMessage: waText
+      whatsappMessage: waText,
+      clientMetadata
     };
 
     // Decrement stock for ordered items
@@ -719,6 +752,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return granted;
   };
 
+  const disableBrowserPushAlerts = () => {
+    disablePushAlerts();
+    setNotificationPermission('default');
+  };
+
   const triggerTestOrderNotification = async (delaySeconds = 0): Promise<void> => {
     // If permission has not been requested yet, request it
     if (getNotificationPermissionStatus() === 'default') {
@@ -758,8 +796,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       totalCost: firstProduct.costPrice,
       totalProfit: unitPrice * 0.95 - firstProduct.costPrice,
       status: 'Pendente',
-      whatsappMessage: '',
-      createdAt: new Date().toISOString()
+      whatsappMessage: `✨ *PEDIDO DE COMPRA - ${settings.storeName.toUpperCase()}* ✨\n🔖 *CÓDIGO:* #TESTE\n📅 *Data:* ${new Date().toLocaleDateString('pt-BR')}\n👤 *Cliente:* Camila Albuquerque\n👗 *Itens:* 1x ${firstProduct.name} (Tam: M)\n💰 *Total:* R$ ${(unitPrice * 0.95).toFixed(2).replace('.', ',')}`,
+      createdAt: new Date().toISOString(),
+      clientMetadata: getClientMetadata()
     };
 
     if (delaySeconds <= 0) {
@@ -873,6 +912,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         deleteNotification,
         notificationPermission,
         requestBrowserPushPermission,
+        disableBrowserPushAlerts,
         triggerTestOrderNotification,
         testNotificationCountdown,
         currentView,

@@ -21,6 +21,8 @@ export const AdminPushNotificationPrompt: React.FC = () => {
 
   const [requestFeedback, setRequestFeedback] = useState('');
 
+  const isGranted = notificationPermission === 'granted';
+
   const handleRequestPermission = async () => {
     const granted = await requestBrowserPushPermission();
     if (granted) {
@@ -28,7 +30,6 @@ export const AdminPushNotificationPrompt: React.FC = () => {
     } else {
       setRequestFeedback('Permissão não concedida. Você pode alterar nas configurações do navegador.');
     }
-    setTimeout(() => setRequestFeedback(''), 5000);
   };
 
   return (

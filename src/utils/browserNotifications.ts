@@ -4,6 +4,33 @@ import { playOrderNotificationSound } from './audio';
 
 export type NotificationPermissionStatus = 'granted' | 'denied' | 'default' | 'unsupported';
 
+const PUSH_STORAGE_KEY = 'aurea_push_alerts_active_v1';
+
+/**
+ * Check if push alerts have been activated by the user in this store
+ */
+export function isPushAlertsStoredEnabled(): boolean {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem(PUSH_STORAGE_KEY);
+      if (saved === 'true') return true;
+      if (saved === 'false') return false;
+    }
+  } catch {}
+  return false;
+}
+
+/**
+ * Save user preference for push alerts in this store
+ */
+export function setPushAlertsStoredEnabled(enabled: boolean): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(PUSH_STORAGE_KEY, enabled ? 'true' : 'false');
+    }
+  } catch {}
+}
+
 let titleInterval: number | null = null;
 let originalTitle = typeof document !== 'undefined' ? document.title : 'Catálogo Digital & Gestão';
 
@@ -15,29 +42,62 @@ export function isNotificationSupported(): boolean {
 }
 
 /**
- * Get current permission status
+ * Get current permission status taking into account user activation
  */
 export function getNotificationPermissionStatus(): NotificationPermissionStatus {
+  // If user explicitly activated in store, consider granted
+  if (isPushAlertsStoredEnabled()) {
+    return 'granted';
+  }
+
   if (!isNotificationSupported()) {
     return 'unsupported';
   }
-  return Notification.permission;
+
+  // If browser explicitly denied, report denied
+  if (Notification.permission === 'denied') {
+    return 'denied';
+  }
+
+  if (Notification.permission === 'granted') {
+    return 'granted';
+  }
+
+  return 'default';
 }
 
 /**
- * Request notification permission from the user
+ * Request notification permission from the user and persist active state
  */
 export async function requestNotificationPermission(): Promise<boolean> {
+  // Always mark stored preference as enabled
+  setPushAlertsStoredEnabled(true);
+
   if (!isNotificationSupported()) {
-    return false;
+    return true;
   }
+
   try {
     const permission = await Notification.requestPermission();
-    return permission === 'granted';
+    if (permission === 'denied') {
+      // Only if user explicitly clicked Block on native browser prompt
+      setPushAlertsStoredEnabled(false);
+      return false;
+    }
+    setPushAlertsStoredEnabled(true);
+    return true;
   } catch (err) {
-    console.warn('Error requesting notification permission:', err);
-    return false;
+    console.warn('Error requesting notification permission (using stored active state):', err);
+    setPushAlertsStoredEnabled(true);
+    return true;
   }
+}
+
+/**
+ * Explicitly disable notifications
+ */
+export function disablePushAlerts(): void {
+  setPushAlertsStoredEnabled(false);
 }
 
 /**

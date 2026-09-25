@@ -69,6 +69,37 @@ export interface OrderItem {
   costPrice: number;
 }
 
+export interface ClientMetadata {
+  deviceType: 'Celular' | 'Tablet' | 'Computador / Desktop';
+  os: string;
+  browser: string;
+  userAgent: string;
+  screenResolution: string;
+  viewportSize: string;
+  pixelRatio: string;
+  orientation: string;
+  cpuCores?: string;
+  deviceMemory?: string;
+  touchSupport: string;
+  platform: string;
+  language: string;
+  languages: string;
+  timeZone: string;
+  timeZoneOffset: string;
+  localFormattedTime: string;
+  referrer: string;
+  pageUrl: string;
+  connectionType?: string;
+  networkSpeed?: string;
+  onlineStatus: string;
+  geoCoordinates?: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+    mapsUrl?: string;
+  };
+}
+
 export interface Order {
   id: string;
   customer: OrderCustomer;
@@ -81,6 +112,7 @@ export interface Order {
   status: OrderStatus;
   createdAt: string;
   whatsappMessage: string;
+  clientMetadata?: ClientMetadata;
 }
 
 export interface SiteNotification {

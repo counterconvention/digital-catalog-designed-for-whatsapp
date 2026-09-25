@@ -147,4 +147,24 @@ export interface StoreSettings {
   bannerText: string;
   lowStockThreshold: number; // Alerta de estoque baixo
   adminPin?: string; // PIN secreto para painel admin (padrão: 9000)
+  // Configurações de Backup, Nuvem & Segurança
+  backupWebhookUrl?: string; // URL de API externa para backup automatizado
+  backupWebhookToken?: string; // Bearer token ou chave de segurança
+  backupAutoFrequency?: 'manual' | 'daily' | 'weekly'; // Frequência recomendada
+  lastBackupDate?: string; // Data do último backup realizado
+  lastBackupType?: string; // Tipo do último backup (CSV, JSON, Cloud API)
+  lastCloudSyncDate?: string; // Data da última sincronização com API de terceiros
+}
+
+export interface CompleteStoreBackup {
+  version: string;
+  appName: string;
+  exportedAt: string;
+  originHost?: string;
+  settings: StoreSettings;
+  notifications: SiteNotification[];
+  products: Product[];
+  orders: Order[];
+  checksum?: string;
+  isEncrypted?: boolean;
 }

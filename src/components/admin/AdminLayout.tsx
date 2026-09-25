@@ -77,7 +77,7 @@ export const AdminLayout: React.FC = () => {
     },
     {
       id: 'csv',
-      label: 'Dados CSV',
+      label: 'Backup & CSV',
       icon: <FileSpreadsheet className="w-4 h-4" />
     },
     {

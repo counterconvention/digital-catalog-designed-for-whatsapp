@@ -1,4 +1,4 @@
-import { Product, Order, ProductCategory, ProductSize } from '../types';
+import { Product, Order, ProductCategory, ProductSize, StoreSettings, SiteNotification } from '../types';
 
 // Helper to escape CSV cell value
 function escapeCsv(val: unknown): string {
@@ -101,6 +101,195 @@ export function exportOrdersToCsv(orders: Order[]): void {
 
   const csvContent = '\uFEFF' + [headers.join(';'), ...rows].join('\r\n');
   downloadBlob(csvContent, `historico_pedidos_${formatDateForFile(new Date())}.csv`, 'text/csv;charset=utf-8;');
+}
+
+// Export Store Settings to CSV
+export function exportSettingsToCsv(settings: StoreSettings): void {
+  const headers = ['Campo / Parâmetro', 'Chave Técnica', 'Valor Configurado', 'Descrição'];
+  const items: [string, string, string | number | boolean | undefined, string][] = [
+    ['Nome da Loja', 'storeName', settings.storeName, 'Nome principal exibido no cabeçalho e rodapé'],
+    ['Slogan / Subtítulo', 'tagline', settings.tagline, 'Frase de impacto da marca'],
+    ['WhatsApp (Número Oficial)', 'whatsappNumber', settings.whatsappNumber, 'Número com DDI e DDD (ex: 5511987654321)'],
+    ['WhatsApp (Exibição)', 'whatsappDisplay', settings.whatsappDisplay, 'Formato amigável de exibição (ex: (11) 98765-4321)'],
+    ['Instagram (Usuário)', 'instagramUser', settings.instagramUser, 'Handle do Instagram sem @'],
+    ['Instagram (Link Oficial)', 'instagramUrl', settings.instagramUrl, 'URL completa do perfil'],
+    ['Instagram (Seguidores)', 'instagramFollowers', settings.instagramFollowers, 'Contagem exibida no catálogo'],
+    ['Instagram (Bio Oficial)', 'instagramBio', settings.instagramBio, 'Texto da bio oficial'],
+    ['E-mail de Contato', 'email', settings.email, 'E-mail do SAC da loja'],
+    ['Telefone Fixo', 'landline', settings.landline, 'Telefone fixo do showroom'],
+    ['Endereço Físico', 'address', settings.address, 'Rua, número e bairro do Showroom'],
+    ['Cidade / Estado / CEP', 'cityState', settings.cityState, 'Localidade e CEP'],
+    ['Link Google Maps', 'googleMapsUrl', settings.googleMapsUrl, 'Link direto do Google Maps'],
+    ['Horário de Atendimento', 'openingHours', settings.openingHours, 'Dias e horários de funcionamento'],
+    ['Chave Pix', 'pixKey', settings.pixKey, 'Chave Pix para pagamentos'],
+    ['Frete Grátis (Mínimo R$)', 'freeShippingMinimum', settings.freeShippingMinimum, 'Valor mínimo no carrinho para frete grátis'],
+    ['Banner Ativo', 'bannerEnabled', settings.bannerEnabled ? 'Sim' : 'Não', 'Exibe barra de destaque no topo'],
+    ['Texto do Banner', 'bannerText', settings.bannerText, 'Mensagem do banner de topo'],
+    ['Alerta Estoque Baixo (un)', 'lowStockThreshold', settings.lowStockThreshold, 'Limite mínimo para acionar alerta de estoque'],
+    ['PIN de Acesso Admin', 'adminPin', settings.adminPin || '9000', 'Senha/PIN de 4 dígitos para o painel administrativo'],
+    ['URL Webhook / API Nuvem', 'backupWebhookUrl', settings.backupWebhookUrl || '', 'Endpoint para backup em nuvem de terceiros'],
+    ['Token Webhook / API', 'backupWebhookToken', settings.backupWebhookToken || '', 'Bearer Token / chave de autenticação'],
+    ['Frequência de Backup', 'backupAutoFrequency', settings.backupAutoFrequency || 'daily', 'Frequência sugerida para backup'],
+    ['Último Backup Realizado', 'lastBackupDate', settings.lastBackupDate || '', 'Timestamp do último backup'],
+    ['Última Sincronização API', 'lastCloudSyncDate', settings.lastCloudSyncDate || '', 'Timestamp do último sync na nuvem']
+  ];
+
+  const rows = items.map(([label, key, val, desc]) => {
+    return [
+      escapeCsv(label),
+      escapeCsv(key),
+      escapeCsv(val ?? ''),
+      escapeCsv(desc)
+    ].join(';');
+  });
+
+  const csvContent = '\uFEFF' + [headers.join(';'), ...rows].join('\r\n');
+  downloadBlob(csvContent, `configuracoes_loja_${formatDateForFile(new Date())}.csv`, 'text/csv;charset=utf-8;');
+}
+
+// Export Notifications / Announcements to CSV
+export function exportNotificationsToCsv(notifications: SiteNotification[]): void {
+  const headers = ['ID', 'Data/Hora Criação', 'Tipo', 'Título', 'Mensagem', 'Lida'];
+
+  const rows = notifications.map((n) => {
+    return [
+      escapeCsv(n.id),
+      escapeCsv(new Date(n.createdAt).toLocaleString('pt-BR')),
+      escapeCsv(n.type),
+      escapeCsv(n.title),
+      escapeCsv(n.message),
+      escapeCsv(n.isRead ? 'Sim' : 'Não')
+    ].join(';');
+  });
+
+  const csvContent = '\uFEFF' + [headers.join(';'), ...rows].join('\r\n');
+  downloadBlob(csvContent, `comunicados_notificacoes_${formatDateForFile(new Date())}.csv`, 'text/csv;charset=utf-8;');
+}
+
+// Parse imported CSV text into StoreSettings
+export function parseSettingsCsv(csvText: string): { settings: Partial<StoreSettings>; count: number } {
+  let cleanText = csvText.trim();
+  if (cleanText.charCodeAt(0) === 0xfeff) {
+    cleanText = cleanText.substring(1);
+  }
+
+  const lines = cleanText.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  const delimiter = lines[0]?.includes(';') ? ';' : ',';
+
+  const parseLine = (text: string): string[] => {
+    const result: string[] = [];
+    let cur = '';
+    let inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      if (char === '"') {
+        if (inQuotes && text[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === delimiter && !inQuotes) {
+        result.push(cur.trim());
+        cur = '';
+      } else {
+        cur += char;
+      }
+    }
+    result.push(cur.trim());
+    return result;
+  };
+
+  const parsedSettings: Partial<StoreSettings> = {};
+  let count = 0;
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = parseLine(lines[i]);
+    if (cols.length < 3) continue;
+
+    const key = cols[1]?.trim();
+    const val = cols[2]?.trim();
+    if (!key || val === undefined) continue;
+
+    if (key === 'freeShippingMinimum' || key === 'lowStockThreshold') {
+      const num = parseFloat(val.replace(',', '.'));
+      if (!isNaN(num)) {
+        (parsedSettings as any)[key] = num;
+        count++;
+      }
+    } else if (key === 'bannerEnabled') {
+      (parsedSettings as any)[key] = val.toLowerCase() === 'sim' || val.toLowerCase() === 'true';
+      count++;
+    } else if (key in parsedSettings || true) {
+      (parsedSettings as any)[key] = val;
+      count++;
+    }
+  }
+
+  return { settings: parsedSettings, count };
+}
+
+// Parse imported CSV text into SiteNotification list
+export function parseNotificationsCsv(csvText: string): { notifications: SiteNotification[]; count: number } {
+  let cleanText = csvText.trim();
+  if (cleanText.charCodeAt(0) === 0xfeff) {
+    cleanText = cleanText.substring(1);
+  }
+
+  const lines = cleanText.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  const delimiter = lines[0]?.includes(';') ? ';' : ',';
+
+  const parseLine = (text: string): string[] => {
+    const result: string[] = [];
+    let cur = '';
+    let inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      if (char === '"') {
+        if (inQuotes && text[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === delimiter && !inQuotes) {
+        result.push(cur.trim());
+        cur = '';
+      } else {
+        cur += char;
+      }
+    }
+    result.push(cur.trim());
+    return result;
+  };
+
+  const notifs: SiteNotification[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = parseLine(lines[i]);
+    if (cols.length < 5) continue;
+
+    const id = cols[0] || `notif-${Date.now()}-${i}`;
+    const rawType = cols[2]?.toLowerCase() || 'info';
+    const type: 'promo' | 'order' | 'alert' | 'info' =
+      rawType === 'promo' || rawType === 'order' || rawType === 'alert' ? rawType : 'info';
+    const title = cols[3];
+    const message = cols[4];
+    const isRead = cols[5]?.toLowerCase() === 'sim' || cols[5]?.toLowerCase() === 'true';
+
+    if (title && message) {
+      notifs.push({
+        id,
+        title,
+        message,
+        type,
+        createdAt: new Date().toISOString(),
+        isRead
+      });
+    }
+  }
+
+  return { notifications: notifs, count: notifs.length };
 }
 
 // Parse imported CSV text into Product list

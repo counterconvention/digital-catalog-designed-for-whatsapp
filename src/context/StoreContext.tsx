@@ -8,7 +8,8 @@ import {
   StoreSettings,
   ProductCategory,
   ProductSize,
-  OrderCustomer
+  OrderCustomer,
+  CompleteStoreBackup
 } from '../types';
 import {
   initialProducts,
@@ -18,6 +19,7 @@ import {
 } from '../data/initialData';
 import { playOrderNotificationSound } from '../utils/audio';
 import { getClientMetadata } from '../utils/clientMetadata';
+import { computeSha256, encryptData, decryptData } from '../utils/backupCrypto';
 import {
   registerServiceWorker,
   sendBrowserOrderNotification,
@@ -95,6 +97,13 @@ interface StoreContextType {
   // Stock Alerts
   lowStockProducts: { product: Product; totalStock: number }[];
   outOfStockProducts: Product[];
+
+  // Full System Backup & Migration
+  getCompleteBackupData: (password?: string) => Promise<{ dataString: string; rawBackup: CompleteStoreBackup; checksum: string; isEncrypted: boolean }>;
+  restoreCompleteBackup: (backupText: string, password?: string) => Promise<{ success: boolean; message: string; stats?: { settingsCount: number; notificationsCount: number; productsCount: number; ordersCount: number } }>;
+  syncBackupToCloudApi: (url: string, token?: string, password?: string) => Promise<{ success: boolean; message: string; httpStatus?: number; timestamp?: string }>;
+  importSettingsFromCsv: (newSettings: Partial<StoreSettings>) => void;
+  importNotificationsFromCsv: (newNotifs: SiteNotification[], replace?: boolean) => void;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
@@ -876,6 +885,248 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const unreadNotificationsCount = notifications.filter((n) => !n.isRead).length;
   const unreadOrdersCount = orders.filter((o) => o.status === 'Pendente').length;
 
+  // Import Settings from CSV
+  const importSettingsFromCsv = (newSettings: Partial<StoreSettings>) => {
+    setSettings((prev) => {
+      const updated = { ...prev, ...newSettings };
+      try {
+        localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    addNotification({
+      title: '⚙️ Configurações Importadas',
+      message: `${Object.keys(newSettings).length} parâmetros da loja foram atualizados com sucesso via CSV.`,
+      type: 'info'
+    });
+  };
+
+  // Import Notifications from CSV
+  const importNotificationsFromCsv = (newNotifs: SiteNotification[], replace = false) => {
+    setNotifications((prev) => {
+      const updated = replace ? newNotifs : [...newNotifs, ...prev];
+      try {
+        localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    addNotification({
+      title: '🔔 Comunicados Importados',
+      message: `${newNotifs.length} avisos e comunicados foram importados com sucesso.`,
+      type: 'info'
+    });
+  };
+
+  // Get complete store backup payload (optionally encrypted with AES-256)
+  const getCompleteBackupData = async (password?: string): Promise<{
+    dataString: string;
+    rawBackup: CompleteStoreBackup;
+    checksum: string;
+    isEncrypted: boolean;
+  }> => {
+    const raw: CompleteStoreBackup = {
+      version: '2.0',
+      appName: settings.storeName || 'Áurea Moda Feminina',
+      exportedAt: new Date().toISOString(),
+      originHost: typeof window !== 'undefined' ? window.location.host : 'localhost',
+      settings,
+      notifications,
+      products,
+      orders
+    };
+
+    const rawJson = JSON.stringify(raw, null, 2);
+    const checksum = await computeSha256(rawJson);
+    raw.checksum = checksum;
+
+    let finalString = JSON.stringify(raw, null, 2);
+    let isEncrypted = false;
+
+    if (password && password.trim().length > 0) {
+      finalString = await encryptData(finalString, password.trim());
+      isEncrypted = true;
+    }
+
+    const now = new Date().toISOString();
+    updateSettings({
+      lastBackupDate: now,
+      lastBackupType: isEncrypted ? 'Criptografado (AES-256-GCM)' : 'JSON Completo'
+    });
+
+    return { dataString: finalString, rawBackup: raw, checksum, isEncrypted };
+  };
+
+  // Restore complete backup from text (supporting auto-decryption)
+  const restoreCompleteBackup = async (
+    backupText: string,
+    password?: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    stats?: {
+      settingsCount: number;
+      notificationsCount: number;
+      productsCount: number;
+      ordersCount: number;
+    };
+  }> => {
+    let plain = backupText.trim();
+
+    // Check if input is encrypted JSON structure
+    let parsed: any;
+    try {
+      parsed = JSON.parse(plain);
+    } catch {
+      return { success: false, message: 'Formato inválido. Certifique-se de colar o JSON do backup completo.' };
+    }
+
+    // Decrypt if it's an encrypted payload
+    if (parsed.cipher && parsed.salt && parsed.iv) {
+      if (!password || !password.trim()) {
+        return {
+          success: false,
+          message: 'Este backup está protegido por senha/criptografia. Por favor, informe a senha para restaurar.'
+        };
+      }
+      try {
+        plain = await decryptData(plain, password.trim());
+        parsed = JSON.parse(plain);
+      } catch {
+        return { success: false, message: 'Senha incorreta ou dados de backup corrompidos.' };
+      }
+    }
+
+    // Validate that at least one main entity exists
+    if (!parsed.settings && !parsed.products && !parsed.orders && !parsed.notifications) {
+      return {
+        success: false,
+        message: 'O arquivo não contém os dados esperados de backup (configurações, produtos, pedidos ou comunicados).'
+      };
+    }
+
+    let settingsCount = 0;
+    if (parsed.settings && typeof parsed.settings === 'object') {
+      setSettings((prev) => {
+        const merged = { ...prev, ...parsed.settings };
+        try {
+          localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(merged));
+        } catch {}
+        return merged;
+      });
+      settingsCount = Object.keys(parsed.settings).length;
+    }
+
+    let productsCount = 0;
+    if (Array.isArray(parsed.products)) {
+      setProducts(parsed.products);
+      try {
+        localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(parsed.products));
+      } catch {}
+      productsCount = parsed.products.length;
+    }
+
+    let ordersCount = 0;
+    if (Array.isArray(parsed.orders)) {
+      setOrders(parsed.orders);
+      try {
+        localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(parsed.orders));
+      } catch {}
+      ordersCount = parsed.orders.length;
+    }
+
+    let notificationsCount = 0;
+    if (Array.isArray(parsed.notifications)) {
+      setNotifications(parsed.notifications);
+      try {
+        localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(parsed.notifications));
+      } catch {}
+      notificationsCount = parsed.notifications.length;
+    }
+
+    addNotification({
+      title: '📦 Backup Completo Restaurado!',
+      message: `Restauração concluída: ${productsCount} produtos, ${ordersCount} pedidos, ${settingsCount} configurações e ${notificationsCount} comunicados importados.`,
+      type: 'info'
+    });
+
+    return {
+      success: true,
+      message: 'Backup restaurado com sucesso!',
+      stats: { settingsCount, notificationsCount, productsCount, ordersCount }
+    };
+  };
+
+  // Sync backup to external cloud API or webhook
+  const syncBackupToCloudApi = async (
+    url: string,
+    token?: string,
+    password?: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    httpStatus?: number;
+    timestamp?: string;
+  }> => {
+    try {
+      const { dataString, checksum, isEncrypted, rawBackup } = await getCompleteBackupData(password);
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-Backup-Checksum': checksum,
+        'X-Backup-Version': '2.0',
+        'X-Backup-Encrypted': isEncrypted ? 'true' : 'false'
+      };
+
+      if (token && token.trim()) {
+        headers['Authorization'] = token.startsWith('Bearer ') ? token : `Bearer ${token.trim()}`;
+      }
+
+      const payload = {
+        source: settings.storeName,
+        originHost: typeof window !== 'undefined' ? window.location.host : 'localhost',
+        timestamp: new Date().toISOString(),
+        encrypted: isEncrypted,
+        checksum,
+        backupPayload: isEncrypted ? dataString : rawBackup
+      };
+
+      const response = await fetch(url.trim(), {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        throw new Error(`Servidor de backup retornou status HTTP ${response.status} (${response.statusText})`);
+      }
+
+      const now = new Date().toISOString();
+      updateSettings({
+        lastCloudSyncDate: now,
+        backupWebhookUrl: url,
+        backupWebhookToken: token
+      });
+
+      addNotification({
+        title: '☁️ Sincronização em Nuvem Concluída',
+        message: `Backup transmitido com sucesso para a API externa (${new Date().toLocaleTimeString('pt-BR')}).`,
+        type: 'info'
+      });
+
+      return {
+        success: true,
+        message: `Backup transmitido com sucesso para a API externa! (HTTP ${response.status})`,
+        httpStatus: response.status,
+        timestamp: now
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err.message || 'Falha ao conectar com o serviço de API externa.'
+      };
+    }
+  };
+
   return (
     <StoreContext.Provider
       value={{
@@ -932,7 +1183,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         searchQuery,
         setSearchQuery,
         lowStockProducts,
-        outOfStockProducts
+        outOfStockProducts,
+        getCompleteBackupData,
+        restoreCompleteBackup,
+        syncBackupToCloudApi,
+        importSettingsFromCsv,
+        importNotificationsFromCsv
       }}
     >
       {children}

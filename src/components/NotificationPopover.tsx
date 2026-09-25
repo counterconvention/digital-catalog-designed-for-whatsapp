@@ -8,6 +8,7 @@ import {
   AlertCircle,
   ShoppingBag,
   Info,
+  CheckCircle2,
   X
 } from 'lucide-react';
 
@@ -23,21 +24,22 @@ export const NotificationPopover: React.FC<Props> = ({ isOpen, onClose }) => {
     markNotificationAsRead,
     markAllNotificationsAsRead,
     deleteNotification,
+    notificationPermission,
     requestBrowserPushPermission
   } = useStore();
 
-  const [pushStatus, setPushStatus] = useState<string>('');
+  const [errorMessage, setErrorMessage] = useState<string>('');
 
   if (!isOpen) return null;
 
+  const isActivated = notificationPermission === 'granted';
+
   const handleRequestPush = async () => {
     const granted = await requestBrowserPushPermission();
-    if (granted) {
-      setPushStatus('Notificações ativadas com sucesso!');
-    } else {
-      setPushStatus('Permissão negada ou não suportada.');
+    if (!granted) {
+      setErrorMessage('Permissão não concedida no navegador.');
+      setTimeout(() => setErrorMessage(''), 5000);
     }
-    setTimeout(() => setPushStatus(''), 4000);
   };
 
   const getTypeIcon = (type: string) => {
@@ -83,19 +85,33 @@ export const NotificationPopover: React.FC<Props> = ({ isOpen, onClose }) => {
           </button>
         </div>
 
-        {/* Push Notification prompt */}
-        <div className="px-4 py-2.5 bg-rose-50/60 border-b border-rose-100 flex items-center justify-between text-xs">
-          <span className="text-neutral-700 font-medium">Receba promoções e novidades</span>
-          <button
-            onClick={handleRequestPush}
-            className="px-2.5 py-1 bg-neutral-900 text-white rounded-md text-xs font-semibold hover:bg-neutral-800 transition-colors cursor-pointer"
-          >
-            Ativar Push
-          </button>
-        </div>
-        {pushStatus && (
-          <div className="px-4 py-1.5 bg-emerald-50 text-emerald-800 text-xs text-center border-b border-emerald-100">
-            {pushStatus}
+        {/* Push Notification status or prompt */}
+        {isActivated ? (
+          <div className="px-4 py-2.5 bg-emerald-50 border-b border-emerald-100 flex items-center justify-between text-xs text-emerald-800">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span className="font-medium text-emerald-900">Notificações ativadas no navegador</span>
+            </div>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full border border-emerald-200">
+              Ativo
+            </span>
+          </div>
+        ) : (
+          <div className="px-4 py-2.5 bg-rose-50/70 border-b border-rose-100 flex items-center justify-between text-xs">
+            <span className="text-neutral-700 font-medium">Receba promoções e novidades</span>
+            <button
+              onClick={handleRequestPush}
+              id="btn-popover-activate-push"
+              className="px-3 py-1 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer shadow-xs active:scale-95"
+            >
+              Ativar Notificações
+            </button>
+          </div>
+        )}
+
+        {errorMessage && (
+          <div className="px-4 py-1.5 bg-rose-50 text-rose-800 text-xs text-center border-b border-rose-100">
+            {errorMessage}
           </div>
         )}
 

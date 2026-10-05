@@ -9,7 +9,7 @@ import {
   parseSettingsCsv,
   parseNotificationsCsv
 } from '../../utils/csv';
-import { Product, StoreSettings, SiteNotification } from '../../types';
+import { Product, StoreSettings, SiteNotification, StoredBackupSnapshot } from '../../types';
 import {
   FileSpreadsheet,
   Download,
@@ -21,22 +21,22 @@ import {
   Copy,
   Check,
   ShieldCheck,
-  Lock,
-  Unlock,
-  Key,
   RefreshCw,
   Globe,
-  Calendar,
   Clock,
   Database,
-  Layers,
   Sliders,
   Bell,
   ShoppingBag,
   ClipboardList,
   Eye,
   EyeOff,
-  ArrowRight
+  Trash2,
+  Sparkles,
+  Zap,
+  FolderDown,
+  History,
+  CheckCheck
 } from 'lucide-react';
 
 export const AdminCsv: React.FC = () => {
@@ -51,10 +51,20 @@ export const AdminCsv: React.FC = () => {
     importNotificationsFromCsv,
     getCompleteBackupData,
     restoreCompleteBackup,
-    syncBackupToCloudApi
+    syncBackupToCloudApi,
+    snapshots,
+    createHourlySnapshot,
+    restoreSnapshotById,
+    deleteSnapshotById,
+    exportSnapshotAsJson,
+    exportGoogleDriveBackup
   } = useStore();
 
-  const [activeTab, setActiveTab] = useState<'migration' | 'csv' | 'cloud' | 'drive'>('migration');
+  const [activeTab, setActiveTab] = useState<'hourly' | 'drive' | 'migration' | 'csv'>('hourly');
+
+  // Snapshot creation state
+  const [snapshotLabel, setSnapshotLabel] = useState('');
+  const [isCreatingSnapshot, setIsCreatingSnapshot] = useState(false);
 
   // Migration & Full Backup state
   const [backupPassword, setBackupPassword] = useState('');
@@ -69,7 +79,6 @@ export const AdminCsv: React.FC = () => {
   const [webhookToken, setWebhookToken] = useState(settings.backupWebhookToken || '');
   const [syncPassword, setSyncPassword] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // CSV Import state
   const [csvImportType, setCsvImportType] = useState<'products' | 'settings' | 'notifications'>('products');
@@ -88,7 +97,65 @@ export const AdminCsv: React.FC = () => {
     setTimeout(() => setFeedback(null), 6000);
   };
 
-  // 1. Copy complete backup string (Quick migration between hostings)
+  // 1. Create on-demand Snapshot by hour with 1-click
+  const handleCreateSnapshot = async () => {
+    setIsCreatingSnapshot(true);
+    try {
+      const snap = await createHourlySnapshot(snapshotLabel.trim() || undefined, 'hourly');
+      setSnapshotLabel('');
+      showNotificationFeedback(
+        `Ponto de restauração das ${snap.timeFormatted} criado com sucesso! Contém ${snap.productsCount} produtos, ${snap.ordersCount} pedidos e todas as configurações.`,
+        'success'
+      );
+    } catch (err: any) {
+      showNotificationFeedback('Erro ao criar ponto de restauração: ' + err.message, 'error');
+    } finally {
+      setIsCreatingSnapshot(false);
+    }
+  };
+
+  // 2. Restore Snapshot by ID with 1-click
+  const handleRestoreSnapshot = async (snap: StoredBackupSnapshot) => {
+    if (
+      !confirm(
+        `Deseja restaurar o backup de "${snap.dateFormatted} às ${snap.timeFormatted}"? Todas as configurações, produtos e pedidos serão restaurados exatamente como estavam nesse horário.`
+      )
+    ) {
+      return;
+    }
+
+    setIsRestoring(true);
+    try {
+      const res = await restoreSnapshotById(snap.id);
+      if (res.success) {
+        showNotificationFeedback(
+          `Backup das ${snap.timeFormatted} restaurado com sucesso! (${res.stats?.productsCount || 0} produtos, ${res.stats?.ordersCount || 0} pedidos, ${res.stats?.settingsCount || 0} configs).`,
+          'success'
+        );
+      } else {
+        showNotificationFeedback(res.message, 'error');
+      }
+    } catch (err: any) {
+      showNotificationFeedback('Erro ao restaurar: ' + err.message, 'error');
+    } finally {
+      setIsRestoring(false);
+    }
+  };
+
+  // 3. Export to Google Drive
+  const handleGoogleDriveExport = async () => {
+    try {
+      const { filename } = await exportGoogleDriveBackup();
+      showNotificationFeedback(
+        `Arquivo "${filename}" pronto! Agora basta abrir sua pasta do Google Drive e salvar uma cópia segura.`,
+        'success'
+      );
+    } catch (err: any) {
+      showNotificationFeedback('Erro ao exportar para o Google Drive: ' + err.message, 'error');
+    }
+  };
+
+  // 4. Copy complete backup string
   const handleCopyCompleteBackup = async () => {
     try {
       const { dataString, checksum, isEncrypted } = await getCompleteBackupData(backupPassword);
@@ -104,24 +171,24 @@ export const AdminCsv: React.FC = () => {
     }
   };
 
-  // 2. Download JSON backup package
+  // 5. Download JSON backup package
   const handleDownloadBackupJson = async () => {
     try {
-      const { dataString, checksum, isEncrypted } = await getCompleteBackupData(backupPassword);
+      const { dataString, isEncrypted } = await getCompleteBackupData(backupPassword);
       const blob = new Blob([dataString], { type: 'application/json;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       const now = new Date();
-      const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+      const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}h${String(now.getMinutes()).padStart(2, '0')}`;
       a.href = url;
-      a.download = `backup_completo_aurea_${dateStr}${isEncrypted ? '_enc' : ''}.json`;
+      a.download = `backup_counter_${dateStr}${isEncrypted ? '_enc' : ''}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
       showNotificationFeedback(
-        `Arquivo de backup baixado com sucesso! Guarde este arquivo em segurança no Google Drive ou seu computador.`,
+        `Arquivo de backup completo baixado com sucesso! Guarde este arquivo em segurança no Google Drive ou seu computador.`,
         'success'
       );
     } catch (err: any) {
@@ -129,14 +196,18 @@ export const AdminCsv: React.FC = () => {
     }
   };
 
-  // 3. Restore complete backup from pasted text
+  // 6. Restore from raw text or JSON file
   const handleRestoreFromText = async () => {
     if (!restoreText.trim()) {
       showNotificationFeedback('Por favor, cole o código do backup ou selecione o arquivo .json.', 'error');
       return;
     }
 
-    if (!confirm('Deseja realmente restaurar este backup? Os dados desta hospedagem serão sincronizados com as informações do backup.')) {
+    if (
+      !confirm(
+        'Deseja realmente restaurar este backup? Todas as configurações (incluindo bio do Instagram e WhatsApp), produtos e pedidos serão sincronizados com as informações do backup.'
+      )
+    ) {
       return;
     }
 
@@ -170,12 +241,13 @@ export const AdminCsv: React.FC = () => {
       const content = event.target?.result as string;
       if (content) {
         setRestoreText(content);
+        showNotificationFeedback(`Arquivo "${file.name}" carregado. Clique em "Restaurar" para aplicar.`, 'info');
       }
     };
     reader.readAsText(file);
   };
 
-  // 4. Cloud API Sync
+  // 7. Cloud API Sync
   const handleSyncCloudApi = async () => {
     if (!webhookUrl.trim()) {
       showNotificationFeedback('Informe a URL do endpoint de API externa ou Webhook.', 'error');
@@ -183,25 +255,21 @@ export const AdminCsv: React.FC = () => {
     }
 
     setIsSyncing(true);
-    setSyncResult(null);
     try {
       const res = await syncBackupToCloudApi(webhookUrl, webhookToken, syncPassword);
-      setSyncResult(res);
       if (res.success) {
         showNotificationFeedback(res.message, 'success');
       } else {
         showNotificationFeedback(res.message, 'error');
       }
     } catch (err: any) {
-      const errorResult = { success: false, message: err.message };
-      setSyncResult(errorResult);
       showNotificationFeedback(err.message, 'error');
     } finally {
       setIsSyncing(false);
     }
   };
 
-  // 5. CSV Upload & Preview handler
+  // 8. CSV Upload & Preview handler
   const handleCsvFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -257,7 +325,10 @@ export const AdminCsv: React.FC = () => {
       setPreviewProducts([]);
     } else if (csvImportType === 'settings' && previewSettings) {
       importSettingsFromCsv(previewSettings);
-      showNotificationFeedback(`Sucesso! ${Object.keys(previewSettings).length} configurações foram atualizadas.`, 'success');
+      showNotificationFeedback(
+        `Sucesso! ${Object.keys(previewSettings).length} configurações foram atualizadas.`,
+        'success'
+      );
       setCsvInput('');
       setPreviewSettings(null);
     } else if (csvImportType === 'notifications' && previewNotifications.length > 0) {
@@ -301,6 +372,35 @@ export const AdminCsv: React.FC = () => {
       {/* Top Navigation Tabs */}
       <div className="flex flex-wrap items-center gap-2 bg-neutral-100 p-1.5 rounded-2xl">
         <button
+          onClick={() => setActiveTab('hourly')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeTab === 'hourly'
+              ? 'bg-neutral-900 text-white shadow-xs'
+              : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200/60'
+          }`}
+        >
+          <Clock className="w-4 h-4 text-rose-400" />
+          <span>Snapshots por Horário (1-Clique)</span>
+          {snapshots.length > 0 && (
+            <span className="ml-1 px-1.5 py-0.5 rounded-md text-[10px] bg-rose-500 text-white font-extrabold">
+              {snapshots.length}
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('drive')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeTab === 'drive'
+              ? 'bg-neutral-900 text-white shadow-xs'
+              : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200/60'
+          }`}
+        >
+          <HardDrive className="w-4 h-4 text-emerald-400" />
+          <span>Google Drive & Backup Diário</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('migration')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
             activeTab === 'migration'
@@ -323,33 +423,308 @@ export const AdminCsv: React.FC = () => {
           <FileSpreadsheet className="w-4 h-4" />
           <span>Exportação & Importação CSV</span>
         </button>
-
-        <button
-          onClick={() => setActiveTab('cloud')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-            activeTab === 'cloud'
-              ? 'bg-neutral-900 text-white shadow-xs'
-              : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200/60'
-          }`}
-        >
-          <Globe className="w-4 h-4" />
-          <span>Sincronização em Nuvem (API)</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('drive')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-            activeTab === 'drive'
-              ? 'bg-neutral-900 text-white shadow-xs'
-              : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-200/60'
-          }`}
-        >
-          <HardDrive className="w-4 h-4" />
-          <span>Google Drive & Backup Periódico</span>
-        </button>
       </div>
 
-      {/* TAB 1: ⚡ MIGRAÇÃO COMPLETA (COPIAR & COLAR ENTRE HOSPEDAGENS) */}
+      {/* TAB 1: ⚡ SNAPSHOTS POR HORÁRIO & DIÁRIO (1-CLIQUE) */}
+      {activeTab === 'hourly' && (
+        <div className="space-y-6">
+          {/* Header Banner */}
+          <div className="p-6 rounded-3xl bg-neutral-900 text-white shadow-xl border border-neutral-800 space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-300 bg-emerald-500/20 px-2.5 py-1 rounded-full border border-emerald-500/30 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    Backup Diário Automático: Ativo
+                  </span>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-rose-300 bg-rose-500/20 px-2.5 py-1 rounded-full border border-rose-500/30">
+                    Snapshots com 1-Clique
+                  </span>
+                </div>
+                <h3 className="text-xl font-bold text-white mt-2">
+                  Pontos de Restauração por Horário & Backup Integrado
+                </h3>
+                <p className="text-xs text-neutral-300 mt-1 max-w-2xl leading-relaxed">
+                  Crie e restaure cópias completas do site com 1 clique a qualquer minuto. Inclui <strong>100% dos dados</strong>: configurações da loja (nome, WhatsApp, Instagram e Bio), produtos com estoques, pedidos de clientes e comunicados.
+                </p>
+              </div>
+
+              {/* Instant 1-Click Action */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <button
+                  onClick={handleCreateSnapshot}
+                  disabled={isCreatingSnapshot}
+                  className="px-5 py-3.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold text-xs rounded-2xl shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  {isCreatingSnapshot ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Salvando Ponto...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="w-4 h-4 text-amber-300 fill-amber-300" />
+                      <span>Criar Ponto de Restauração Agora</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Create Custom Snapshot Card */}
+          <div className="bg-white p-5 rounded-3xl border border-neutral-200/90 shadow-2xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+            <div className="flex-1">
+              <label className="text-xs font-bold text-neutral-800 block mb-1">
+                Nome ou Motivo do Snapshot (Opcional):
+              </label>
+              <input
+                type="text"
+                placeholder={`Ex: Antes de alterar preços de vestidos ou ajuste de estoque...`}
+                value={snapshotLabel}
+                onChange={(e) => setSnapshotLabel(e.target.value)}
+                className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-300 bg-neutral-50/50"
+              />
+            </div>
+
+            <button
+              onClick={handleCreateSnapshot}
+              disabled={isCreatingSnapshot}
+              className="px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer self-end sm:self-auto shrink-0"
+            >
+              <Sparkles className="w-4 h-4 text-rose-300" />
+              <span>Salvar com este Rótulo</span>
+            </button>
+          </div>
+
+          {/* Snapshots History List */}
+          <div className="bg-white p-6 rounded-3xl border border-neutral-200/90 shadow-2xs space-y-4">
+            <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <History className="w-5 h-5 text-neutral-800" />
+                <div>
+                  <h4 className="font-sans font-bold text-neutral-900 text-sm">
+                    Histórico de Pontos de Restauração Gravados ({snapshots.length})
+                  </h4>
+                  <p className="text-xs text-neutral-500">
+                    Clique em &quot;Restaurar&quot; para voltar o site instantaneamente para aquele momento.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {snapshots.length === 0 ? (
+              <div className="p-10 text-center text-neutral-400 space-y-3">
+                <Clock className="w-10 h-10 text-neutral-300 mx-auto" />
+                <p className="text-xs font-semibold text-neutral-600">
+                  Nenhum snapshot gravado ainda neste navegador.
+                </p>
+                <p className="text-[11px] text-neutral-400 max-w-sm mx-auto">
+                  Clique no botão acima &quot;Criar Ponto de Restauração Agora&quot; para gravar o estado atual da loja com 1 clique!
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {snapshots.map((snap) => (
+                  <div
+                    key={snap.id}
+                    className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200/80 hover:border-neutral-300 transition-all flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-neutral-900 text-xs">{snap.label}</span>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider ${
+                            snap.type === 'daily'
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              : 'bg-rose-100 text-rose-800 border border-rose-200'
+                          }`}
+                        >
+                          {snap.type === 'daily' ? 'Diário Automático' : 'Horário'}
+                        </span>
+                        <span className="text-[11px] text-neutral-500 font-mono">
+                          📅 {snap.dateFormatted} às {snap.timeFormatted}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-3 text-[11px] text-neutral-600">
+                        <span className="flex items-center gap-1">
+                          <ShoppingBag className="w-3 h-3 text-amber-600" />
+                          {snap.productsCount} produtos
+                        </span>
+                        <span>•</span>
+                        <span className="flex items-center gap-1">
+                          <ClipboardList className="w-3 h-3 text-emerald-600" />
+                          {snap.ordersCount} pedidos
+                        </span>
+                        <span>•</span>
+                        <span className="flex items-center gap-1">
+                          <Sliders className="w-3 h-3 text-rose-600" />
+                          {snap.settingsCount} configurações
+                        </span>
+                        <span>•</span>
+                        <span className="flex items-center gap-1">
+                          <Bell className="w-3 h-3 text-blue-600" />
+                          {snap.notificationsCount} avisos
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 self-end md:self-auto shrink-0">
+                      <button
+                        onClick={() => handleRestoreSnapshot(snap)}
+                        disabled={isRestoring}
+                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95"
+                        title="Restaurar o catálogo e as configurações exatamente como estavam neste momento"
+                      >
+                        <CheckCheck className="w-3.5 h-3.5" />
+                        <span>Restaurar Este Ponto</span>
+                      </button>
+
+                      <button
+                        onClick={() => exportSnapshotAsJson(snap.data)}
+                        className="px-3 py-2 bg-neutral-200 hover:bg-neutral-300 text-neutral-800 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+                        title="Baixar arquivo JSON deste snapshot"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Baixar</span>
+                      </button>
+
+                      <button
+                        onClick={() => deleteSnapshotById(snap.id)}
+                        className="p-2 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                        title="Excluir este snapshot"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: 📁 GOOGLE DRIVE & BACKUP DIÁRIO */}
+      {activeTab === 'drive' && (
+        <div className="space-y-6">
+          <div className="bg-white p-6 rounded-3xl border border-neutral-200/90 shadow-2xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                  <HardDrive className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="font-sans font-bold text-neutral-900 text-base">
+                    Google Drive & Backup Periódico Diário
+                  </h4>
+                  <p className="text-xs text-neutral-500">
+                    Sincronize arquivos de backup compatíveis com o Google Drive para nunca perder informações.
+                  </p>
+                </div>
+              </div>
+
+              {/* Status Badge */}
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] px-3 py-1 bg-emerald-100 text-emerald-800 rounded-full font-bold border border-emerald-200 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  Google Drive Integrado
+                </span>
+              </div>
+            </div>
+
+            {/* Periodic Schedule Recommendation */}
+            <div className="p-4 bg-neutral-50 rounded-2xl border border-neutral-200/80 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-neutral-800 flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-neutral-600" />
+                  Rotina de Backup Diário:
+                </span>
+                <span className="text-xs text-emerald-700 font-bold bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                  Automático & Diário Ativo
+                </span>
+              </div>
+
+              <div className="text-xs text-neutral-600 space-y-1">
+                {settings.lastBackupDate ? (
+                  <p className="flex items-center gap-1 text-emerald-700 font-semibold">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Último backup exportado em: {new Date(settings.lastBackupDate).toLocaleString('pt-BR')} (
+                    {settings.lastBackupType || 'JSON'})
+                  </p>
+                ) : (
+                  <p className="text-emerald-700 font-medium">
+                    ✅ O backup diário é salvo automaticamente pelo sistema a cada dia. Você também pode exportar cópias manuais para o Google Drive a qualquer momento.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* How to use Google Drive Step by Step */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+              <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100 space-y-1.5">
+                <div className="w-6 h-6 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center">
+                  1
+                </div>
+                <h5 className="font-bold text-emerald-950">Exportar com 1-Clique</h5>
+                <p className="text-emerald-800/90 leading-relaxed text-[11px]">
+                  Clique em &quot;Baixar Backup para o Google Drive&quot; para gerar o pacote consolidado nomeado por data e hora.
+                </p>
+              </div>
+
+              <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100 space-y-1.5">
+                <div className="w-6 h-6 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center">
+                  2
+                </div>
+                <h5 className="font-bold text-emerald-950">Acesse o Google Drive</h5>
+                <p className="text-emerald-800/90 leading-relaxed text-[11px]">
+                  Abra sua pasta de backups no Google Drive com o atalho oficial para armazenar seu arquivo na nuvem.
+                </p>
+              </div>
+
+              <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100 space-y-1.5">
+                <div className="w-6 h-6 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center">
+                  3
+                </div>
+                <h5 className="font-bold text-emerald-950">Restauração Rápida</h5>
+                <p className="text-emerald-800/90 leading-relaxed text-[11px]">
+                  Para restaurar em qualquer servidor ou computador, basta baixar o arquivo do Drive e importar com 1 clique.
+                </p>
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+              <button
+                onClick={handleGoogleDriveExport}
+                className="w-full sm:w-auto px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <FolderDown className="w-4 h-4 text-emerald-200" />
+                <span>Baixar Backup Completo para o Google Drive</span>
+              </button>
+
+              <button
+                onClick={() => window.open('https://drive.google.com/drive/my-drive', '_blank')}
+                className="w-full sm:w-auto px-5 py-3 bg-neutral-900 hover:bg-neutral-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <ExternalLink className="w-4 h-4" />
+                <span>Abrir Google Drive (Minha Pasta)</span>
+              </button>
+
+              <button
+                onClick={() => window.open('https://sheets.new', '_blank')}
+                className="w-full sm:w-auto px-4 py-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-semibold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                <span>Abrir Nova Planilha no Google Sheets</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 3: ⚡ MIGRAÇÃO COMPLETA (COPIAR & COLAR ENTRE HOSPEDAGENS) */}
       {activeTab === 'migration' && (
         <div className="space-y-6">
           {/* Header Banner */}
@@ -363,7 +738,7 @@ export const AdminCsv: React.FC = () => {
                   Backup Completo de Configurações, Catálogo & Histórico
                 </h3>
                 <p className="text-xs text-neutral-300 mt-1 max-w-2xl leading-relaxed">
-                  Permite exportar todas as variáveis da loja (aba <strong>Configurações</strong>, comunicados da aba <strong>Mensagens</strong>, produtos com estoque e pedidos) para copiar e colar com facilidade em qualquer outra hospedagem, servidor ou ambiente.
+                  Permite exportar todas as variáveis da loja (aba <strong>Configurações</strong>, bio do Instagram, comunicados da aba <strong>Mensagens</strong>, produtos com estoque e pedidos) para copiar e colar com facilidade em qualquer outra hospedagem ou servidor.
                 </p>
               </div>
 
@@ -441,7 +816,7 @@ export const AdminCsv: React.FC = () => {
                 <div className="space-y-1.5 text-xs text-neutral-600">
                   <p className="font-semibold text-neutral-800">O pacote de backup contém:</p>
                   <ul className="list-disc list-inside space-y-0.5 text-[11px] text-neutral-600">
-                    <li>Todas as configurações da loja (nome, WhatsApp, Instagram, bio, Pix, frete grátis, etc.)</li>
+                    <li>Todas as configurações da loja (nome Counter, WhatsApp, Instagram, Bio oficial, Pix, etc.)</li>
                     <li>Catálogo completo com grade de tamanhos, preços de custo e fotos</li>
                     <li>Histórico de pedidos com clientes, lucro líquido e mensagens do WhatsApp</li>
                     <li>Histórico de comunicados e notificações ativas</li>
@@ -556,7 +931,7 @@ export const AdminCsv: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 2: 📊 EXPORTAÇÃO & IMPORTAÇÃO CSV */}
+      {/* TAB 4: 📊 EXPORTAÇÃO & IMPORTAÇÃO CSV */}
       {activeTab === 'csv' && (
         <div className="space-y-6">
           {/* CSV Exports Grid */}
@@ -584,7 +959,7 @@ export const AdminCsv: React.FC = () => {
                   </div>
                   <h5 className="font-bold text-neutral-900 text-xs">Configurações da Loja</h5>
                   <p className="text-[11px] text-neutral-500">
-                    Todas as variáveis da aba Configurações (WhatsApp, Instagram, Pix, Frete, PIN).
+                    Todas as variáveis da aba Configurações (WhatsApp, Instagram, Pix, Frete, PIN, Bio).
                   </p>
                 </div>
                 <button
@@ -660,7 +1035,7 @@ export const AdminCsv: React.FC = () => {
 
           {/* CSV Import Section */}
           <div className="bg-white p-6 rounded-3xl border border-neutral-200/90 shadow-2xs space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-100 pb-3">
+            <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center justify-between gap-3 border-b border-neutral-100 pb-3">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center">
                   <Upload className="w-4 h-4" />
@@ -751,8 +1126,8 @@ export const AdminCsv: React.FC = () => {
                   csvImportType === 'products'
                     ? `Nome;Categoria;Preço Venda;Preço Fabricação;Tamanhos;Cores\nVestido Seda;Vestidos;269.00;95.00;P:5|M:8|G:4;Esmeralda|Champagne`
                     : csvImportType === 'settings'
-                    ? `Campo;Chave;Valor\nNome da Loja;storeName;Minha Boutique\nWhatsApp;whatsappNumber;5511998765432`
-                    : `ID;Data;Tipo;Título;Mensagem\nnotif-1;2026-09-25;promo;Nova Coleção;Peças exclusivas disponíveis`
+                    ? `Campo;Chave;Valor\nNome da Loja;storeName;Counter\nWhatsApp;whatsappNumber;5511998765432`
+                    : `ID;Data;Tipo;Título;Mensagem\nnotif-1;2026-10-05;promo;Nova Coleção;Peças exclusivas disponíveis`
                 }
                 value={csvInput}
                 onChange={(e) => {
@@ -831,240 +1206,6 @@ export const AdminCsv: React.FC = () => {
                 )}
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* TAB 3: ☁️ SINCRONIZAÇÃO EM NUVEM (API DE TERCEIROS) */}
-      {activeTab === 'cloud' && (
-        <div className="space-y-6">
-          <div className="bg-white p-6 rounded-3xl border border-neutral-200/90 shadow-2xs space-y-5">
-            <div className="flex items-center gap-2.5 border-b border-neutral-100 pb-3">
-              <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                <Globe className="w-5 h-5" />
-              </div>
-              <div>
-                <h4 className="font-sans font-bold text-neutral-900 text-base">
-                  Sincronização Segura via API / Webhook em Nuvem
-                </h4>
-                <p className="text-xs text-neutral-500">
-                  Transmita automaticamente backups completos e criptografados para seu servidor, banco de dados ou serviço de terceiros.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs font-bold text-neutral-700 block mb-1">
-                  URL do Endpoint / Webhook (POST) *
-                </label>
-                <input
-                  type="url"
-                  placeholder="https://sua-api.com/api/backup ou webhook n8n / Make / Cloudflare"
-                  value={webhookUrl}
-                  onChange={(e) => setWebhookUrl(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-300 focus:ring-2 focus:ring-rose-500/20"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-neutral-700 block mb-1">
-                  Bearer Token / Chave Secreta de API (Opcional):
-                </label>
-                <input
-                  type="password"
-                  placeholder="Ex: sk_live_... ou bearer token"
-                  value={webhookToken}
-                  onChange={(e) => setWebhookToken(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-300 focus:ring-2 focus:ring-rose-500/20"
-                />
-              </div>
-            </div>
-
-            <div className="p-4 bg-neutral-50 rounded-2xl border border-neutral-200/80 space-y-2 text-xs">
-              <div className="flex items-center gap-2 font-bold text-neutral-800">
-                <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                <span>Segurança & Criptografia na Transmissão:</span>
-              </div>
-              <p className="text-neutral-600 leading-relaxed text-[11px]">
-                O payload é enviado via requisição HTTPS POST com cabeçalhos <code>X-Backup-Checksum</code> e <code>X-Backup-Version</code>. Opcionalmente, defina uma senha abaixo para criptografar todo o conteúdo com <strong>AES-256-GCM</strong> antes do envio.
-              </p>
-              <div className="pt-1">
-                <input
-                  type="password"
-                  placeholder="Senha para criptografar payload antes de enviar (opcional)..."
-                  value={syncPassword}
-                  onChange={(e) => setSyncPassword(e.target.value)}
-                  className="w-full max-w-md px-3 py-1.5 text-xs rounded-xl border border-neutral-300 bg-white"
-                />
-              </div>
-            </div>
-
-            {/* Sync status card */}
-            {settings.lastCloudSyncDate && (
-              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-center justify-between">
-                <span>
-                  Última sincronização bem-sucedida em: <strong>{new Date(settings.lastCloudSyncDate).toLocaleString('pt-BR')}</strong>
-                </span>
-                <span className="text-[10px] bg-emerald-200/60 px-2 py-0.5 rounded-md font-bold">Ativo</span>
-              </div>
-            )}
-
-            <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
-              <button
-                onClick={handleSyncCloudApi}
-                disabled={isSyncing || !webhookUrl.trim()}
-                className="w-full sm:w-auto px-6 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
-              >
-                {isSyncing ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Conectando e Transmitindo...</span>
-                  </>
-                ) : (
-                  <>
-                    <Globe className="w-4 h-4" />
-                    <span>Sincronizar Backup Agora via API</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                onClick={() => {
-                  updateSettings({
-                    backupWebhookUrl: webhookUrl,
-                    backupWebhookToken: webhookToken
-                  });
-                  showNotificationFeedback('Configurações de Webhook salvas com sucesso!', 'success');
-                }}
-                className="w-full sm:w-auto px-4 py-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-semibold text-xs rounded-xl transition-colors cursor-pointer"
-              >
-                Salvar Configurações de API
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 4: 📁 GOOGLE DRIVE & BACKUP PERIÓDICO */}
-      {activeTab === 'drive' && (
-        <div className="space-y-6">
-          <div className="bg-white p-6 rounded-3xl border border-neutral-200/90 shadow-2xs space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-100 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                  <HardDrive className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="font-sans font-bold text-neutral-900 text-base">
-                    Google Drive & Backup Periódico
-                  </h4>
-                  <p className="text-xs text-neutral-500">
-                    Mantenha cópias de segurança salvas periodicamente no seu Google Drive com facilidade.
-                  </p>
-                </div>
-              </div>
-
-              {/* Status Badge */}
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] px-3 py-1 bg-emerald-100 text-emerald-800 rounded-full font-bold border border-emerald-200 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                  Google Drive Pronto
-                </span>
-              </div>
-            </div>
-
-            {/* Periodic Schedule Recommendation */}
-            <div className="p-4 bg-neutral-50 rounded-2xl border border-neutral-200/80 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-neutral-800 flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-neutral-600" />
-                  Frequência Recomendada de Backup Periódico:
-                </span>
-                <select
-                  value={settings.backupAutoFrequency || 'daily'}
-                  onChange={(e) => updateSettings({ backupAutoFrequency: e.target.value as 'manual' | 'daily' | 'weekly' })}
-                  className="px-3 py-1.5 text-xs font-bold rounded-xl border border-neutral-300 bg-white"
-                >
-                  <option value="daily">Diário (Recomendado)</option>
-                  <option value="weekly">Semanal (A cada 7 dias)</option>
-                  <option value="manual">Manual</option>
-                </select>
-              </div>
-
-              <div className="text-xs text-neutral-600 space-y-1">
-                {settings.lastBackupDate ? (
-                  <p className="flex items-center gap-1 text-emerald-700 font-semibold">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    Último backup exportado em: {new Date(settings.lastBackupDate).toLocaleString('pt-BR')} ({settings.lastBackupType || 'JSON'})
-                  </p>
-                ) : (
-                  <p className="text-amber-700 font-medium">
-                    ⚠️ Ainda não foi registrado nenhum backup recente neste navegador. Recomendamos baixar agora uma cópia para o Google Drive.
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* How to use Google Drive Step by Step */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-              <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100 space-y-1.5">
-                <div className="w-6 h-6 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center">
-                  1
-                </div>
-                <h5 className="font-bold text-emerald-950">Baixe o Arquivo de Backup</h5>
-                <p className="text-emerald-800/90 leading-relaxed text-[11px]">
-                  Clique no botão abaixo para gerar o arquivo consolidado de backup do catálogo, pedidos e configurações.
-                </p>
-              </div>
-
-              <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100 space-y-1.5">
-                <div className="w-6 h-6 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center">
-                  2
-                </div>
-                <h5 className="font-bold text-emerald-950">Acesse o Google Drive</h5>
-                <p className="text-emerald-800/90 leading-relaxed text-[11px]">
-                  Abra sua pasta oficial de backups no Google Drive clicando no botão de acesso rápido.
-                </p>
-              </div>
-
-              <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100 space-y-1.5">
-                <div className="w-6 h-6 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center">
-                  3
-                </div>
-                <h5 className="font-bold text-emerald-950">Segurança Garantida</h5>
-                <p className="text-emerald-800/90 leading-relaxed text-[11px]">
-                  Em caso de troca de hospedagem, basta baixar o arquivo do Drive e colar na aba de Migração para restaurar tudo!
-                </p>
-              </div>
-            </div>
-
-            {/* Action buttons */}
-            <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
-              <button
-                onClick={handleDownloadBackupJson}
-                className="w-full sm:w-auto px-5 py-3 bg-neutral-900 hover:bg-neutral-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Download className="w-4 h-4 text-rose-300" />
-                <span>Baixar Backup Completo para o Drive</span>
-              </button>
-
-              <button
-                onClick={() => window.open('https://drive.google.com/drive/my-drive', '_blank')}
-                className="w-full sm:w-auto px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <ExternalLink className="w-4 h-4" />
-                <span>Abrir Google Drive (Minha Pasta)</span>
-              </button>
-
-              <button
-                onClick={() => window.open('https://sheets.new', '_blank')}
-                className="w-full sm:w-auto px-4 py-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-semibold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-                <span>Abrir Nova Planilha no Google Sheets</span>
-              </button>
-            </div>
           </div>
         </div>
       )}

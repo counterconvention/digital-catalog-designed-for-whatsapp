@@ -160,11 +160,33 @@ export interface CompleteStoreBackup {
   version: string;
   appName: string;
   exportedAt: string;
+  exportTimestamp?: number;
+  timeFormatted?: string;
+  dateFormatted?: string;
   originHost?: string;
   settings: StoreSettings;
   notifications: SiteNotification[];
   products: Product[];
   orders: Order[];
+  cart?: CartItem[];
+  totalRecords?: number;
   checksum?: string;
   isEncrypted?: boolean;
+  backupType?: 'manual' | 'hourly-snapshot' | 'auto-daily' | 'google-drive';
+  label?: string;
+}
+
+export interface StoredBackupSnapshot {
+  id: string;
+  timestamp: number;
+  isoDate: string;
+  dateFormatted: string;
+  timeFormatted: string;
+  label: string;
+  type: 'hourly' | 'daily' | 'manual';
+  productsCount: number;
+  ordersCount: number;
+  settingsCount: number;
+  notificationsCount: number;
+  data: CompleteStoreBackup;
 }

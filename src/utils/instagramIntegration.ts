@@ -72,7 +72,7 @@ export function deriveStoreNameFromHandle(handle: string): string {
  * Derive full synced store dataset from user's @ handle
  */
 export function deriveStoreDataFromHandle(input: string): DerivedStoreData {
-  const user = cleanHandle(input) || 'aurea.boutique';
+  const user = cleanHandle(input) || 'counter.oficial';
   const storeName = deriveStoreNameFromHandle(user);
 
   // Derive realistic high-engagement follower and post count based on name length/hash
@@ -97,8 +97,8 @@ export function deriveStoreDataFromHandle(input: string): DerivedStoreData {
 }
 
 export const PRESET_HANDLES = [
-  { handle: '@aurea.boutique', label: 'Áurea Boutique' },
-  { handle: '@bellafeminina.oficial', label: 'Bella Feminina' },
-  { handle: '@studio.clara.moda', label: 'Studio Clara' },
-  { handle: '@atelie.verona', label: 'Ateliê Verona' }
+  { handle: '@counter.oficial', label: 'Counter' },
+  { handle: '@counter.store', label: 'Counter Store' },
+  { handle: '@counter.boutique', label: 'Counter Boutique' },
+  { handle: '@bellafeminina.oficial', label: 'Bella Feminina' }
 ];

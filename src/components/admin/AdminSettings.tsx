@@ -196,6 +196,28 @@ export const AdminSettings: React.FC = () => {
                 className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-neutral-50/50 text-xs"
               />
             </div>
+
+            {/* Instagram Bio Oficial (Configurável) */}
+            <div className="sm:col-span-2">
+              <div className="flex items-center justify-between mb-1">
+                <label className="font-semibold text-neutral-700 block">
+                  Bio Oficial do Instagram (exibida no Feed / Perfil do Catálogo)
+                </label>
+                <span className="text-[11px] text-neutral-400">
+                  Suporta quebras de linha e emojis ✨
+                </span>
+              </div>
+              <textarea
+                rows={3}
+                value={formData.instagramBio || ''}
+                onChange={(e) => setFormData({ ...formData, instagramBio: e.target.value })}
+                placeholder="Catálogo oficial de peças exclusivas ✨ Conjuntos, Vestidos & Alfaiataria. Enviamos para todo Brasil ✈️ Atendimento via WhatsApp:"
+                className="w-full px-3 py-2 rounded-xl border border-neutral-300 focus:ring-2 focus:ring-rose-500/20 bg-neutral-50/50 text-xs resize-y"
+              />
+              <span className="text-[11px] text-neutral-400 mt-1 block">
+                Esta bio aparece na seção do Instagram e no rodapé do catálogo para os visitantes.
+              </span>
+            </div>
           </div>
         </div>
 
@@ -334,7 +356,7 @@ export const AdminSettings: React.FC = () => {
                   type="text"
                   value={formData.bannerText}
                   onChange={(e) => setFormData({ ...formData, bannerText: e.target.value })}
-                  placeholder="Ex: ✨ NOVA COLEÇÃO FLORENÇA NO AR | FRETE GRÁTIS ACIMA DE R$ 299"
+                  placeholder="Ex: Frete Grátis nas compras acima de R$ 500 • 5% OFF no Pix"
                   className="w-full px-3 py-2 rounded-xl border border-neutral-300 bg-neutral-50/50 text-xs"
                 />
               </div>

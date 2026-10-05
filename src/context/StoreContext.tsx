@@ -9,7 +9,8 @@ import {
   ProductCategory,
   ProductSize,
   OrderCustomer,
-  CompleteStoreBackup
+  CompleteStoreBackup,
+  StoredBackupSnapshot
 } from '../types';
 import {
   initialProducts,
@@ -104,6 +105,14 @@ interface StoreContextType {
   syncBackupToCloudApi: (url: string, token?: string, password?: string) => Promise<{ success: boolean; message: string; httpStatus?: number; timestamp?: string }>;
   importSettingsFromCsv: (newSettings: Partial<StoreSettings>) => void;
   importNotificationsFromCsv: (newNotifs: SiteNotification[], replace?: boolean) => void;
+
+  // Snapshots por Horário e Google Drive
+  snapshots: StoredBackupSnapshot[];
+  createHourlySnapshot: (label?: string, type?: 'hourly' | 'daily' | 'manual') => Promise<StoredBackupSnapshot>;
+  restoreSnapshotById: (snapshotId: string) => Promise<{ success: boolean; message: string; stats?: any }>;
+  deleteSnapshotById: (snapshotId: string) => void;
+  exportSnapshotAsJson: (snapshotIdOrData: string | CompleteStoreBackup) => void;
+  exportGoogleDriveBackup: (password?: string) => Promise<{ dataString: string; filename: string }>;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
@@ -114,15 +123,35 @@ const STORAGE_KEYS = {
   ORDERS: 'aurea_store_orders_v1',
   NOTIFICATIONS: 'aurea_store_notifications_v1',
   CART: 'aurea_store_cart_v1',
-  LAST_ORDER_EVENT: 'aurea_last_order_event_v1'
+  LAST_ORDER_EVENT: 'aurea_last_order_event_v1',
+  SNAPSHOTS: 'counter_backup_snapshots_v1',
+  LAST_DAILY_BACKUP: 'counter_last_daily_backup_date'
 };
 
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // 1. Settings state
+  // 1. Settings state with automatic migration to Counter & R$ 500 threshold
   const [settings, setSettings] = useState<StoreSettings>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-      return saved ? { ...initialStoreSettings, ...JSON.parse(saved) } : initialStoreSettings;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.storeName === 'Áurea Moda Feminina' || parsed.storeName === 'Áurea Boutique' || !parsed.storeName) {
+          parsed.storeName = 'Counter';
+        }
+        if (parsed.bannerText?.includes('299') || parsed.bannerText?.includes('Coleção Nova Disponível')) {
+          parsed.bannerText = 'Frete Grátis nas compras acima de R$ 500 • 5% OFF no Pix';
+        }
+        if (parsed.freeShippingMinimum === 299 || !parsed.freeShippingMinimum) {
+          parsed.freeShippingMinimum = 500;
+        }
+        if (parsed.instagramUser === 'aurea.boutiquefem' || parsed.instagramUser === 'aurea.boutique') {
+          parsed.instagramUser = 'counter.oficial';
+          parsed.instagramUrl = 'https://instagram.com/counter.oficial';
+        }
+        const merged = { ...initialStoreSettings, ...parsed };
+        return merged;
+      }
+      return initialStoreSettings;
     } catch {
       return initialStoreSettings;
     }
@@ -185,6 +214,20 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.CART);
       return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // 6. Snapshots state (Horários e Diários)
+  const [snapshots, setSnapshots] = useState<StoredBackupSnapshot[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.SNAPSHOTS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+      return [];
     } catch {
       return [];
     }
@@ -261,6 +304,60 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       };
     }
   }, []);
+
+  // Automatic Daily Backup: executes automatically if a new day has arrived
+  useEffect(() => {
+    try {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const lastDaily = localStorage.getItem(STORAGE_KEYS.LAST_DAILY_BACKUP);
+      if (lastDaily !== todayStr) {
+        const now = new Date();
+        const timeFormatted = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        const dateFormatted = now.toLocaleDateString('pt-BR');
+        const autoSnap: StoredBackupSnapshot = {
+          id: `snap-daily-${now.getTime()}`,
+          timestamp: now.getTime(),
+          isoDate: now.toISOString(),
+          dateFormatted,
+          timeFormatted,
+          label: `Backup Diário Automático (${dateFormatted} ${timeFormatted})`,
+          type: 'daily',
+          productsCount: products.length,
+          ordersCount: orders.length,
+          settingsCount: Object.keys(settings).length,
+          notificationsCount: notifications.length,
+          data: {
+            version: '2.0',
+            appName: settings.storeName || 'Counter',
+            exportedAt: now.toISOString(),
+            exportTimestamp: now.getTime(),
+            timeFormatted,
+            dateFormatted,
+            originHost: typeof window !== 'undefined' ? window.location.host : 'localhost',
+            settings,
+            notifications,
+            products,
+            orders,
+            cart,
+            totalRecords: (products?.length || 0) + (orders?.length || 0) + (notifications?.length || 0) + Object.keys(settings || {}).length,
+            backupType: 'auto-daily',
+            label: `Backup Diário Automático (${dateFormatted})`
+          }
+        };
+
+        setSnapshots((prev) => {
+          const updated = [autoSnap, ...prev.filter((s) => s.id !== autoSnap.id)].slice(0, 30);
+          try {
+            localStorage.setItem(STORAGE_KEYS.SNAPSHOTS, JSON.stringify(updated));
+            localStorage.setItem(STORAGE_KEYS.LAST_DAILY_BACKUP, todayStr);
+          } catch {}
+          return updated;
+        });
+      }
+    } catch (e) {
+      console.warn('Auto daily backup check error:', e);
+    }
+  }, [products.length, orders.length]);
 
   // Sync notification permission updates
   useEffect(() => {
@@ -924,15 +1021,25 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     checksum: string;
     isEncrypted: boolean;
   }> => {
+    const now = new Date();
+    const timeFormatted = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const dateFormatted = now.toLocaleDateString('pt-BR');
+
     const raw: CompleteStoreBackup = {
       version: '2.0',
-      appName: settings.storeName || 'Áurea Moda Feminina',
-      exportedAt: new Date().toISOString(),
+      appName: settings.storeName || 'Counter',
+      exportedAt: now.toISOString(),
+      exportTimestamp: now.getTime(),
+      timeFormatted,
+      dateFormatted,
       originHost: typeof window !== 'undefined' ? window.location.host : 'localhost',
       settings,
       notifications,
       products,
-      orders
+      orders,
+      cart,
+      totalRecords: (products?.length || 0) + (orders?.length || 0) + (notifications?.length || 0) + Object.keys(settings || {}).length,
+      backupType: 'manual'
     };
 
     const rawJson = JSON.stringify(raw, null, 2);
@@ -947,9 +1054,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       isEncrypted = true;
     }
 
-    const now = new Date().toISOString();
+    const nowIso = now.toISOString();
     updateSettings({
-      lastBackupDate: now,
+      lastBackupDate: nowIso,
       lastBackupType: isEncrypted ? 'Criptografado (AES-256-GCM)' : 'JSON Completo'
     });
 
@@ -1043,6 +1150,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       notificationsCount = parsed.notifications.length;
     }
 
+    if (Array.isArray(parsed.cart)) {
+      setCart(parsed.cart);
+      try {
+        localStorage.setItem(STORAGE_KEYS.CART, JSON.stringify(parsed.cart));
+      } catch {}
+    }
+
     addNotification({
       title: '📦 Backup Completo Restaurado!',
       message: `Restauração concluída: ${productsCount} produtos, ${ordersCount} pedidos, ${settingsCount} configurações e ${notificationsCount} comunicados importados.`,
@@ -1054,6 +1168,137 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       message: 'Backup restaurado com sucesso!',
       stats: { settingsCount, notificationsCount, productsCount, ordersCount }
     };
+  };
+
+  // Create an hourly snapshot or on-demand snapshot with 1-click
+  const createHourlySnapshot = async (
+    customLabel?: string,
+    type: 'hourly' | 'daily' | 'manual' = 'hourly'
+  ): Promise<StoredBackupSnapshot> => {
+    const now = new Date();
+    const timeFormatted = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const dateFormatted = now.toLocaleDateString('pt-BR');
+    const label = customLabel || (type === 'hourly' ? `Snapshot Horário - ${timeFormatted}` : `Ponto de Restauração - ${dateFormatted} ${timeFormatted}`);
+
+    const completeBackup: CompleteStoreBackup = {
+      version: '2.0',
+      appName: settings.storeName || 'Counter',
+      exportedAt: now.toISOString(),
+      exportTimestamp: now.getTime(),
+      timeFormatted,
+      dateFormatted,
+      originHost: typeof window !== 'undefined' ? window.location.host : 'localhost',
+      settings,
+      notifications,
+      products,
+      orders,
+      cart,
+      totalRecords: (products?.length || 0) + (orders?.length || 0) + (notifications?.length || 0) + Object.keys(settings || {}).length,
+      backupType: type === 'hourly' ? 'hourly-snapshot' : type === 'daily' ? 'auto-daily' : 'manual',
+      label
+    };
+
+    const rawJson = JSON.stringify(completeBackup);
+    const checksum = await computeSha256(rawJson);
+    completeBackup.checksum = checksum;
+
+    const newSnapshot: StoredBackupSnapshot = {
+      id: `snap-${now.getTime()}`,
+      timestamp: now.getTime(),
+      isoDate: now.toISOString(),
+      dateFormatted,
+      timeFormatted,
+      label,
+      type,
+      productsCount: products.length,
+      ordersCount: orders.length,
+      settingsCount: Object.keys(settings).length,
+      notificationsCount: notifications.length,
+      data: completeBackup
+    };
+
+    setSnapshots((prev) => {
+      const updated = [newSnapshot, ...prev.filter((s) => s.id !== newSnapshot.id)].slice(0, 30);
+      try {
+        localStorage.setItem(STORAGE_KEYS.SNAPSHOTS, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    addNotification({
+      title: '⚡ Ponto de Restauração Criado!',
+      message: `Snapshot salvo com sucesso às ${timeFormatted}. Contém ${products.length} produtos, ${orders.length} pedidos e configurações da loja.`,
+      type: 'info'
+    });
+
+    return newSnapshot;
+  };
+
+  // Restore snapshot from local snapshot history with 1-click
+  const restoreSnapshotById = async (snapshotId: string) => {
+    const snap = snapshots.find((s) => s.id === snapshotId);
+    if (!snap || !snap.data) {
+      return { success: false, message: 'Ponto de restauração não encontrado no navegador.' };
+    }
+    const rawJson = JSON.stringify(snap.data);
+    return await restoreCompleteBackup(rawJson);
+  };
+
+  // Delete snapshot from history
+  const deleteSnapshotById = (snapshotId: string) => {
+    setSnapshots((prev) => {
+      const updated = prev.filter((s) => s.id !== snapshotId);
+      try {
+        localStorage.setItem(STORAGE_KEYS.SNAPSHOTS, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+  };
+
+  // Export any snapshot object as .json file download
+  const exportSnapshotAsJson = (snapshotIdOrData: string | CompleteStoreBackup) => {
+    let dataObj: CompleteStoreBackup | null = null;
+    if (typeof snapshotIdOrData === 'string') {
+      const found = snapshots.find((s) => s.id === snapshotIdOrData);
+      if (found) dataObj = found.data;
+    } else {
+      dataObj = snapshotIdOrData;
+    }
+
+    if (!dataObj) return;
+
+    const jsonStr = JSON.stringify(dataObj, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const d = new Date(dataObj.exportTimestamp || Date.now());
+    const dateFormatted = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}h${String(d.getMinutes()).padStart(2, '0')}`;
+    a.href = url;
+    a.download = `backup_counter_${dateFormatted}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Google Drive ready export
+  const exportGoogleDriveBackup = async (password?: string): Promise<{ dataString: string; filename: string }> => {
+    const res = await getCompleteBackupData(password);
+    const d = new Date();
+    const dateFormatted = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}h${String(d.getMinutes()).padStart(2, '0')}`;
+    const filename = `backup_counter_googledrive_${dateFormatted}${res.isEncrypted ? '_enc' : ''}.json`;
+
+    const blob = new Blob([res.dataString], { type: 'application/json;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    return { dataString: res.dataString, filename };
   };
 
   // Sync backup to external cloud API or webhook
@@ -1188,7 +1433,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         restoreCompleteBackup,
         syncBackupToCloudApi,
         importSettingsFromCsv,
-        importNotificationsFromCsv
+        importNotificationsFromCsv,
+        snapshots,
+        createHourlySnapshot,
+        restoreSnapshotById,
+        deleteSnapshotById,
+        exportSnapshotAsJson,
+        exportGoogleDriveBackup
       }}
     >
       {children}

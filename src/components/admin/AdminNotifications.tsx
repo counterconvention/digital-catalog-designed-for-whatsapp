@@ -309,8 +309,8 @@ export const AdminNotifications: React.FC = () => {
               <button
                 type="button"
                 onClick={() => applyTemplate(
-                  '✈️ Frete Grátis acima de R$ 299',
-                  'Aproveite frete grátis em todas as compras acima de R$ 299 para todo o Brasil.',
+                  '✈️ Frete Grátis acima de R$ 500',
+                  'Aproveite frete grátis em todas as compras acima de R$ 500 para todo o Brasil.',
                   'info'
                 )}
                 className="text-[11px] px-2.5 py-1 bg-neutral-100 hover:bg-emerald-50 hover:text-emerald-700 text-neutral-700 rounded-lg transition-colors font-medium border border-neutral-200"

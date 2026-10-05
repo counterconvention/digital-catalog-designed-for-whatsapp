@@ -122,7 +122,7 @@ const CatalogView: React.FC = () => {
           </h1>
 
           <p className="text-xs sm:text-sm text-neutral-600 max-w-xl mx-auto font-sans leading-relaxed">
-            Selecione suas peças favoritas, confira disponibilidade de cores e tamanhos em tempo real e feche seu pedido com atendimento VIP via WhatsApp.
+            Selecione suas peças favoritas, confira disponibilidade de cores e tamanhos em tempo real e feche seu pedido com atendimento via WhatsApp.
           </p>
         </div>
       </section>

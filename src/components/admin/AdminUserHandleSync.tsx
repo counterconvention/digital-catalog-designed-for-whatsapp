@@ -12,7 +12,7 @@ import {
 
 export const AdminUserHandleSync: React.FC = () => {
   const { settings, updateSettings, addNotification } = useStore();
-  const [handleInput, setHandleInput] = useState(settings.instagramUser ? `@${settings.instagramUser}` : '@aurea.boutique');
+  const [handleInput, setHandleInput] = useState(settings.instagramUser ? `@${settings.instagramUser}` : '@counter.oficial');
   const [isProcessing, setIsProcessing] = useState(false);
   const [previewData, setPreviewData] = useState<DerivedStoreData | null>(null);
   const [successMessage, setSuccessMessage] = useState('');

@@ -63,7 +63,7 @@ export const InstagramSection: React.FC = () => {
                   </span>
                 </div>
 
-                <p className="text-xs text-neutral-600 line-clamp-1 max-w-xl">
+                <p className="text-xs text-neutral-600 max-w-xl whitespace-pre-line leading-relaxed">
                   {settings.instagramBio}
                 </p>
               </div>
